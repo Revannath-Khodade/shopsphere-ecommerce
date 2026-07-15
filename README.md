@@ -509,5 +509,210 @@ com.shopsphere
 
 ---
 
-**End of Phase 2.** Awaiting instructions for Phase 3.
+## 11. Phase 3 — Spring Security + JWT Authentication
+
+Phase 3 adds the complete security layer: stateless JWT authentication,
+refresh-token rotation with server-side revocation, role-based authorization,
+and centralized security exception handling. Controllers, the React
+frontend, and admin/seller dashboards remain out of scope (later phases).
+
+### 11.1 Files created
+
+**Entity / persistence**
+- `entity/RefreshToken.java`, `repository/RefreshTokenRepository.java`
+- `db/schema.sql` — added table `refresh_tokens` (+ `DROP TABLE` cleanup entry)
+
+**Security core** (`com.shopsphere.security`)
+- `CustomUserDetails.java` — wraps `User` as a Spring Security `UserDetails`, maps `Role` → `GrantedAuthority`
+- `CustomUserDetailsService.java` — loads a user by username **or** email
+- `JwtTokenProvider.java` — low-level JWT signing/parsing (jjwt), no domain knowledge
+- `JwtService.java` — domain-level token issuance/validation (access + refresh, claims: `userId`, `roles`, `type`)
+- `JwtAuthenticationFilter.java` — `OncePerRequestFilter`; extracts, validates, and authenticates every request
+- `JwtAuthenticationEntryPoint.java` — 401 handler
+- `JwtAccessDeniedHandler.java` — 403 handler
+
+**Configuration**
+- `config/SecurityConfig.java` — `SecurityFilterChain`, `PasswordEncoder`, `AuthenticationProvider`, `AuthenticationManager`, CORS, CSRF, stateless sessions, role-based `requestMatchers`, `@EnableMethodSecurity`
+
+**Business layer**
+- `service/RefreshTokenService.java` + `service/impl/RefreshTokenServiceImpl.java`
+- `dto/request/RefreshTokenRequest.java`, `dto/request/LogoutRequest.java`
+
+**Tests**
+- `security/JwtTokenProviderTest.java`, `security/JwtServiceTest.java`, `security/CustomUserDetailsServiceTest.java`
+- `service/impl/RefreshTokenServiceImplTest.java`
+
+### 11.2 Files modified
+
+| File | Change |
+|---|---|
+| `service/AuthenticationService.java` | Added `refreshToken()` and `logout()` to the contract |
+| `service/impl/AuthenticationServiceImpl.java` | Login now delegates credential checks to Spring Security's `AuthenticationManager`; both register/login issue real signed JWTs + persisted refresh tokens instead of the Phase 2 placeholder token |
+| `dto/response/AuthenticationResponse.java` | Added `refreshToken` and `expiresIn` (seconds) fields |
+| `service/impl/AuthenticationServiceImplTest.java` | Rewritten for the new `AuthenticationManager` / `JwtService` / `RefreshTokenService` collaborators |
+| `application.properties` | JWT section repurposed from placeholder to live config; access token lifetime tightened to 15 min (short-lived, refreshed via rotation); added `app.security.cors.allowed-origins` |
+| `db/schema.sql` | Added `refresh_tokens` table + DROP statement |
+
+### 11.3 Files removed
+
+- `config/PasswordEncoderConfig.java` — its single `PasswordEncoder` bean was folded into `SecurityConfig`, which now owns the complete authentication configuration (avoids a duplicate-bean conflict and matches the Phase 3 spec's explicit "Configure PasswordEncoder" requirement living in `SecurityConfig`).
+
+### 11.4 pom.xml
+
+**No changes required.** `spring-boot-starter-security` and the `jjwt-api` / `jjwt-impl` / `jjwt-jackson` (0.12.6) dependencies were already present from Phase 1.
+
+### 11.5 Security architecture
+
+```
+                        ┌─────────────────────────────┐
+                        │   Every incoming HTTP call   │
+                        └──────────────┬───────────────┘
+                                       │
+                     ┌─────────────────▼──────────────────┐
+                     │   JwtAuthenticationFilter (Order 1) │
+                     │   - reads "Authorization: Bearer …" │
+                     │   - JwtService.isAccessTokenValid() │
+                     │   - loads CustomUserDetails         │
+                     │   - populates SecurityContextHolder │
+                     └─────────────────┬────────────────────┘
+                                       │
+                     ┌─────────────────▼──────────────────┐
+                     │ UsernamePasswordAuthenticationFilter │
+                     │   (Spring Security's default filter, │
+                     │    effectively a no-op here since we  │
+                     │    never POST form credentials)       │
+                     └─────────────────┬────────────────────┘
+                                       │
+                     ┌─────────────────▼──────────────────┐
+                     │      authorizeHttpRequests(...)      │
+                     │  path + role rules from SecurityConfig│
+                     │  (+ future @PreAuthorize/@Secured)   │
+                     └─────────────────┬────────────────────┘
+                             ┌─────────┴─────────┐
+                       401 Unauthorized     403 Forbidden
+                    JwtAuthenticationEntryPoint  JwtAccessDeniedHandler
+                             │                         │
+                             └───────────┬─────────────┘
+                                         │  (both cases)
+                                 ErrorResponse JSON
+```
+
+- **Stateless**: `SessionCreationPolicy.STATELESS` — no `HttpSession` is ever created or read; every request is independently authenticated from its bearer token.
+- **CSRF disabled**: irrelevant for a bearer-token API — CSRF exploits rely on a browser automatically attaching session cookies, which doesn't happen with an `Authorization` header a script must set explicitly.
+- **CORS**: configured from `app.security.cors.allowed-origins`, ready for the React/Vite frontend.
+- **Password hashing**: `BCryptPasswordEncoder`, bean lives in `SecurityConfig`.
+- **Role model**: `ROLE_ADMIN`, `ROLE_SELLER`, `ROLE_CUSTOMER` (unchanged from Phase 1), granted as `GrantedAuthority` objects with the `ROLE_` prefix already baked in from `RoleName`, so `hasRole("ADMIN")` (which implicitly expects/adds the `ROLE_` prefix) lines up correctly.
+- **Path-based authorization** is declared in `SecurityConfig` (coarse-grained, applies even before a controller exists); **method-level** `@PreAuthorize` / `@Secured` are enabled via `@EnableMethodSecurity` for controllers to layer on finer-grained checks (e.g. "only the owning seller may edit *this* product") in Phase 4.
+- Every path pattern in `SecurityConfig` is **context-path-relative** (e.g. `"/auth/**"`, not `"/api/auth/**"`) because `server.servlet.context-path=/api` already strips that prefix before Spring Security evaluates the request — the externally-visible URL is still `http://host:8080/api/auth/login`.
+
+### 11.6 JWT authentication sequence
+
+```
+Client                     AuthenticationController*         AuthenticationServiceImpl        AuthenticationManager / DaoAuthenticationProvider   JwtService        RefreshTokenService
+  │  POST /api/auth/login          │                                    │                                     │                          │                    │
+  │  {usernameOrEmail, password}   │                                    │                                     │                          │                    │
+  ├────────────────────────────────►                                    │                                     │                          │                    │
+  │                                │  login(request)                    │                                     │                          │                    │
+  │                                ├────────────────────────────────────►                                     │                          │                    │
+  │                                │                                    │  authenticate(username, password)   │                          │                    │
+  │                                │                                    ├─────────────────────────────────────►                          │                    │
+  │                                │                                    │                                     │ loadUserByUsername()     │                    │
+  │                                │                                    │                                     │ passwordEncoder.matches()│                    │
+  │                                │                                    │  (throws BadCredentialsException on failure, caught & mapped    │                    │
+  │                                │                                    │   to UnauthorizedException by AuthenticationServiceImpl)         │                    │
+  │                                │                                    ◄─────────────────────────────────────┤                          │                    │
+  │                                │                                    │  generateAccessToken(userDetails)   │                          │                    │
+  │                                │                                    ├──────────────────────────────────────────────────────────────────►                    │
+  │                                │                                    │◄─────────────────────────────────────────────────────────────────┤ access JWT         │
+  │                                │                                    │  generateRefreshToken(userDetails)  │                          │                    │
+  │                                │                                    ├──────────────────────────────────────────────────────────────────►                    │
+  │                                │                                    │◄─────────────────────────────────────────────────────────────────┤ refresh JWT        │
+  │                                │                                    │  createRefreshToken(user, token, ttl)                            │                    │
+  │                                │                                    ├───────────────────────────────────────────────────────────────────────────────────────►
+  │                                │                                    │                                     │                          │  persists RefreshToken row
+  │                                │  AuthenticationResponse            │                                     │                          │                    │
+  │                                │  {token, refreshToken, expiresIn}  │                                     │                          │                    │
+  │                                ◄────────────────────────────────────┤                                     │                          │                    │
+  │  200 OK + AuthenticationResponse                                    │                                     │                          │                    │
+  ◄────────────────────────────────┤                                    │                                     │                          │                    │
+
+* AuthenticationController is out of scope for Phase 3 (added in Phase 4) - the sequence above documents the
+  service-layer contract it will call.
+
+Subsequent authenticated request:
+Client                          JwtAuthenticationFilter                CustomUserDetailsService        SecurityContextHolder
+  │  GET /api/orders                     │                                       │                              │
+  │  Authorization: Bearer <access JWT>  │                                       │                              │
+  ├───────────────────────────────────────►                                       │                              │
+  │                                      │ extract token, jwtService.isAccessTokenValid()                        │
+  │                                      │ extractUsername(token)               │                              │
+  │                                      ├───────────────────────────────────────►                              │
+  │                                      │◄──────────────────────────────────────┤ CustomUserDetails            │
+  │                                      │  build UsernamePasswordAuthenticationToken(userDetails, authorities)  │
+  │                                      ├─────────────────────────────────────────────────────────────────────►│
+  │                                      │  filterChain.doFilter() continues → authorizeHttpRequests() → (Phase 4 controller)
+```
+
+### 11.7 Refresh token sequence
+
+```
+Client                       AuthenticationServiceImpl.refreshToken()    JwtService              RefreshTokenService / Repository
+  │  POST /api/auth/refresh-token       │                                     │                              │
+  │  {refreshToken}                     │                                     │                              │
+  ├───────────────────────────────────────►                                     │                              │
+  │                                      │  isRefreshTokenStructurallyValid() │                              │
+  │                                      ├─────────────────────────────────────►                              │
+  │                                      │  (checks signature + expiry + "type":"REFRESH" claim)               │
+  │                                      │◄─────────────────────────────────────┤ true/false                  │
+  │                                      │  [false] → throw UnauthorizedException → 401 (stop)                │
+  │                                      │                                     │                              │
+  │                                      │  verifyAndGet(rawToken)                                             │
+  │                                      ├──────────────────────────────────────────────────────────────────────►
+  │                                      │                                     │  find by token, check revoked/expired
+  │                                      │  [not found / revoked / expired] → throw UnauthorizedException → 401 │
+  │                                      │◄─────────────────────────────────────────────────────────────────────┤ RefreshToken row
+  │                                      │  revokeToken(rawToken)   ── ROTATION: old token can never be reused ─►
+  │                                      │  issueTokenPair(user) → generateAccessToken() + generateRefreshToken()
+  │                                      │  createRefreshToken(user, newRefreshToken, ttl) ─────────────────────►
+  │  200 OK + new {token, refreshToken}  │                                     │                              │
+  ◄──────────────────────────────────────┤                                     │                              │
+
+Logout:
+Client                       AuthenticationServiceImpl.logout()          RefreshTokenService / Repository
+  │  POST /api/auth/logout              │                                     │
+  │  {refreshToken}                     │                                     │
+  ├───────────────────────────────────────►                                     │
+  │                                      │  revokeToken(refreshToken)         │
+  │                                      ├─────────────────────────────────────►
+  │                                      │                                     │  sets revoked = true (idempotent - no-op if already gone)
+  │  204 No Content                      │                                     │
+  ◄──────────────────────────────────────┤                                     │
+
+Note: the access token issued before logout remains cryptographically valid until its own short (15-minute)
+expiry - this is standard for stateless JWTs. Revocation guarantees the *refresh* token can't mint further
+access tokens, bounding a compromised session to at most one remaining access-token lifetime.
+```
+
+### 11.8 Checklist — Phase 3 Deliverables
+
+- [x] `SecurityConfig`: `SecurityFilterChain`, `PasswordEncoder` (BCrypt), `AuthenticationManager`, `AuthenticationProvider` (`DaoAuthenticationProvider`), CORS (externalized allow-list), CSRF disabled, `SessionCreationPolicy.STATELESS`, public vs. protected endpoints, role-based authorization via `requestMatchers`
+- [x] `JwtService` (access/refresh token generation, username/roles/userId extraction, expiration check, access-token validation) + `JwtTokenProvider` (low-level sign/parse primitives) + JWT utility methods
+- [x] `JwtAuthenticationFilter` (`OncePerRequestFilter`: extract → validate → load `UserDetails` → set `SecurityContextHolder`)
+- [x] `JwtAuthenticationEntryPoint` (401) + `JwtAccessDeniedHandler` (403), both emitting the shared `ErrorResponse` JSON shape
+- [x] `CustomUserDetails` + `CustomUserDetailsService` (load by username **or** email, roles → authorities)
+- [x] Full authentication flow: register, login (via `AuthenticationManager`), JWT generation, refresh token generation, refresh-token-exchange API logic, logout (refresh token revocation), BCrypt password encoding
+- [x] Role-based authorization for `ROLE_ADMIN` / `ROLE_SELLER` / `ROLE_CUSTOMER` via `requestMatchers` + `@EnableMethodSecurity` (`@PreAuthorize`/`@Secured` ready for Phase 4 controllers)
+- [x] Token storage: `RefreshToken` entity, `RefreshTokenRepository`, `RefreshTokenService` + `RefreshTokenServiceImpl` — validation, expiration, and revocation (single-token and revoke-all-for-user)
+- [x] Security exceptions: `JwtAuthenticationEntryPoint`, `JwtAccessDeniedHandler`, expired/invalid/malformed token handling (all funneled through `JwtAuthenticationFilter`'s catch blocks), unauthorized access handling
+- [x] `application.properties` updated: JWT secret/expiration/refresh-expiration (now live, not placeholders), CORS allow-list property
+- [x] Tests: `JwtTokenProviderTest`, `JwtServiceTest`, `CustomUserDetailsServiceTest`, `RefreshTokenServiceImplTest`, and a rewritten `AuthenticationServiceImplTest` covering register/login/refresh/logout against the new collaborators
+- [x] `pom.xml` reviewed — no changes required (dependencies already present)
+- [x] README updated with authentication flow, security architecture, and JWT/refresh-token sequence diagrams
+- [ ] Controllers — **Phase 4**
+- [ ] React + Vite frontend — later phase
+
+---
+
+**End of Phase 3.** Awaiting instructions for Phase 4.
+
 

@@ -11,6 +11,7 @@ USE shopsphere_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS wishlist;
 DROP TABLE IF EXISTS reviews;
 DROP TABLE IF EXISTS payments;
@@ -278,3 +279,19 @@ CREATE TABLE wishlist (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 CREATE INDEX idx_wishlist_user ON wishlist (user_id);
+
+-- =====================================================================
+-- 15. refresh_tokens (Phase 3: JWT refresh token persistence)
+-- =====================================================================
+CREATE TABLE refresh_tokens (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token       VARCHAR(512) NOT NULL,
+    expiry_date DATETIME(6)  NOT NULL,
+    revoked     BOOLEAN      NOT NULL DEFAULT FALSE,
+    user_id     BIGINT       NOT NULL,
+    created_at  DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    CONSTRAINT uk_refresh_tokens_token UNIQUE (token),
+    CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
+
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens (user_id);
