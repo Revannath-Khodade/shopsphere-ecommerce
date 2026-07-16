@@ -18,4 +18,7 @@ public interface CategoryService {
     List<CategoryResponse> getAllCategories();
 
     List<CategoryResponse> getTopLevelCategories();
+
+    /** Returns only categories currently flagged active - used for public storefront browsing. */
+    List<CategoryResponse> getActiveCategories();
 }

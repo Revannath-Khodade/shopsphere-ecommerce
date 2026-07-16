@@ -112,6 +112,14 @@ public class CategoryServiceImpl implements CategoryService {
                 .toList();
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<CategoryResponse> getActiveCategories() {
+        return categoryRepository.findByActiveTrue().stream()
+                .map(categoryMapper::toResponse)
+                .toList();
+    }
+
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------

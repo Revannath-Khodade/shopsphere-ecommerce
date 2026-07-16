@@ -16,4 +16,7 @@ public interface AddressService {
     List<AddressResponse> getAddressesForUser(Long userId);
 
     AddressResponse getDefaultAddress(Long userId);
+
+    /** Marks an existing address as the user's default, clearing any previous default. */
+    AddressResponse setDefaultAddress(Long userId, Long addressId);
 }

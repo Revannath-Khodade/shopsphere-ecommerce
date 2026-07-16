@@ -35,4 +35,15 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
            "(LOWER(p.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
            "LOWER(p.description) LIKE LOWER(CONCAT('%', :keyword, '%')))")
     Page<Product> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
+
+    @Query("SELECT p FROM Product p WHERE p.active = true " +
+           "AND (:categoryId IS NULL OR p.category.id = :categoryId) " +
+           "AND (:brand IS NULL OR LOWER(p.brand) = LOWER(:brand)) " +
+           "AND (:minPrice IS NULL OR p.price >= :minPrice) " +
+           "AND (:maxPrice IS NULL OR p.price <= :maxPrice)")
+    Page<Product> filterProducts(@Param("categoryId") Long categoryId,
+                                  @Param("brand") String brand,
+                                  @Param("minPrice") BigDecimal minPrice,
+                                  @Param("maxPrice") BigDecimal maxPrice,
+                                  Pageable pageable);
 }

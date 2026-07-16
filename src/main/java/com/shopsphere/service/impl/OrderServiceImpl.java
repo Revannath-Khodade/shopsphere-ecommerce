@@ -205,6 +205,19 @@ public class OrderServiceImpl implements OrderService {
         return orderMapper.toResponse(order);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public PaginationResponse<OrderResponse> getAllOrders(OrderStatus status, int page, int size) {
+        Pageable pageable = PaginationUtil.buildPageable(page, size, "orderDate", "desc");
+        Page<Order> orderPage = status != null
+                ? orderRepository.findByStatus(status, pageable)
+                : orderRepository.findAll(pageable);
+        List<OrderResponse> content = orderPage.getContent().stream()
+                .map(orderMapper::toResponse)
+                .toList();
+        return PaginationResponse.from(orderPage, content);
+    }
+
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------

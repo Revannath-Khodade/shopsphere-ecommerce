@@ -118,6 +118,25 @@ public class AddressServiceImpl implements AddressService {
                 .orElseThrow(() -> new ResourceNotFoundException("Default address", "userId", userId));
     }
 
+    @Override
+    @Transactional
+    public AddressResponse setDefaultAddress(Long userId, Long addressId) {
+        log.info("Setting addressId={} as default for userId={}", addressId, userId);
+
+        Address address = findAddressOrThrow(addressId);
+        assertOwnership(address, userId);
+
+        if (!Boolean.TRUE.equals(address.getIsDefault())) {
+            clearExistingDefault(userId);
+            address.setIsDefault(true);
+            address = addressRepository.save(address);
+        }
+
+        log.info("Default address set: id={}, userId={}", address.getId(), userId);
+
+        return addressMapper.toResponse(address);
+    }
+
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------

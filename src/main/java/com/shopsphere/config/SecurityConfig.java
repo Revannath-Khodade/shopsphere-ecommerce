@@ -77,7 +77,7 @@ public class SecurityConfig {
      * calls is still e.g. http://host:8080/api/auth/login.
      */
     private static final String[] PUBLIC_ENDPOINTS = {
-            "/auth/**",
+            "/v1/auth/**",
             "/error",
             "/v3/api-docs/**",
             "/swagger-ui/**",
@@ -85,9 +85,9 @@ public class SecurityConfig {
     };
 
     private static final String[] PUBLIC_GET_ENDPOINTS = {
-            "/products/**",
-            "/categories/**",
-            "/reviews/product/**"
+            "/v1/products/**",
+            "/v1/categories/**",
+            "/v1/reviews/product/**"
     };
 
     @Bean
@@ -135,23 +135,28 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, PUBLIC_GET_ENDPOINTS).permitAll()
 
                         // ---------------- Admin-only ----------------
-                        .requestMatchers("/admin/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.DELETE, "/categories/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/categories/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/categories/**").hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/users/**").hasRole("ADMIN")
+                        .requestMatchers("/v1/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/v1/categories/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/v1/categories/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/v1/categories/**").hasRole("ADMIN")
+                        .requestMatchers("/v1/orders/admin/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/v1/users").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/v1/users/{id:[0-9]+}").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/v1/users/{id:[0-9]+}").hasRole("ADMIN")
 
                         // ---------------- Seller-only ----------------
-                        .requestMatchers("/seller/**").hasRole("SELLER")
-                        .requestMatchers(HttpMethod.POST, "/products/**").hasAnyRole("SELLER", "ADMIN")
-                        .requestMatchers(HttpMethod.PUT, "/products/**").hasAnyRole("SELLER", "ADMIN")
-                        .requestMatchers(HttpMethod.DELETE, "/products/**").hasAnyRole("SELLER", "ADMIN")
+                        .requestMatchers("/v1/seller/**").hasRole("SELLER")
+                        .requestMatchers(HttpMethod.POST, "/v1/products/**").hasAnyRole("SELLER", "ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/v1/products/**").hasAnyRole("SELLER", "ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/v1/products/**").hasAnyRole("SELLER", "ADMIN")
 
                         // ---------------- Customer + Seller + Admin (any authenticated shopper) ----------------
-                        .requestMatchers("/cart/**", "/orders/**", "/wishlist/**",
-                                "/addresses/**", "/payments/**")
+                        .requestMatchers("/v1/cart/**", "/v1/orders/**", "/v1/wishlist/**",
+                                "/v1/addresses/**", "/v1/payments/**")
                             .hasAnyRole("CUSTOMER", "SELLER", "ADMIN")
-                        .requestMatchers(HttpMethod.POST, "/reviews/**").hasAnyRole("CUSTOMER", "SELLER", "ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/v1/reviews/**").hasAnyRole("CUSTOMER", "SELLER", "ADMIN")
+                        .requestMatchers(HttpMethod.PUT, "/v1/reviews/**").hasAnyRole("CUSTOMER", "SELLER", "ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/v1/reviews/**").hasAnyRole("CUSTOMER", "SELLER", "ADMIN")
 
                         // Everything else requires, at minimum, a valid authenticated principal.
                         .anyRequest().authenticated())

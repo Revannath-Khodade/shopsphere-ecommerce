@@ -25,6 +25,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -180,6 +181,23 @@ public class ProductServiceImpl implements ProductService {
         }
         Pageable pageable = PaginationUtil.buildPageable(page, size, sortBy, sortDirection);
         Page<Product> productPage = productRepository.findBySellerId(sellerId, pageable);
+        return toPaginationResponse(productPage);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PaginationResponse<ProductResponse> filterProducts(Long categoryId, String brand, BigDecimal minPrice,
+                                                                BigDecimal maxPrice, int page, int size,
+                                                                String sortBy, String sortDirection) {
+        if (minPrice != null && maxPrice != null && minPrice.compareTo(maxPrice) > 0) {
+            throw new BadRequestException("minPrice must not be greater than maxPrice.");
+        }
+        if (categoryId != null && !categoryRepository.existsById(categoryId)) {
+            throw new ResourceNotFoundException("Category", "id", categoryId);
+        }
+
+        Pageable pageable = PaginationUtil.buildPageable(page, size, sortBy, sortDirection);
+        Page<Product> productPage = productRepository.filterProducts(categoryId, brand, minPrice, maxPrice, pageable);
         return toPaginationResponse(productPage);
     }
 

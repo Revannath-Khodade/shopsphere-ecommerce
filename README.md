@@ -713,6 +713,127 @@ access tokens, bounding a compromised session to at most one remaining access-to
 
 ---
 
-**End of Phase 3.** Awaiting instructions for Phase 4.
+## 12. Phase 4 — REST Controllers, Swagger, Postman, API Docs
+
+Phase 4 exposes the business layer (Phase 2) secured by JWT (Phase 3) as a
+full REST API: 10 controllers, OpenAPI/Swagger documentation, a Postman
+collection, and a standalone API reference document.
+
+### 12.1 Files created
+
+**Controllers** (`com.shopsphere.controller`, all 10):
+`AuthController`, `UserController`, `CategoryController`, `ProductController`,
+`CartController`, `OrderController`, `PaymentController`, `ReviewController`,
+`WishlistController`, `AddressController`.
+
+**Config:** `config/OpenApiConfig.java` (Swagger UI + JWT bearer scheme).
+
+**Tests** (`com.shopsphere.controller`):
+`AuthControllerTest`, `ProductControllerTest`, `CartControllerTest` (MockMvc,
+filters disabled — request/response/validation mapping), `SecurityAccessControlTest`
+(MockMvc with the **real** `SecurityConfig` + `JwtAuthenticationFilter` chain
+enabled — verifies public vs. 401 vs. 403 vs. 200 behavior end-to-end at the
+filter level).
+
+**Documentation:**
+`API_DOCUMENTATION.md`, `postman/ShopSphere.postman_collection.json` (56
+requests across 10 folders), `postman/ShopSphere.postman_environment.json`.
+
+### 12.2 Files modified
+
+- **`SecurityConfig`** — path patterns updated to the `/v1/...` prefix used
+  by every controller (Phase 3 had configured bare paths like `/auth/**`;
+  Phase 4's endpoint spec requires `/api/v1/auth/**`, so the patterns were
+  aligned). Admin/seller/customer `requestMatchers` were also expanded to
+  cover the concrete endpoints introduced in this phase (e.g.
+  `/v1/orders/admin/**`, numeric-only `/v1/users/{id:[0-9]+}` so it doesn't
+  swallow `/v1/users/profile`).
+- **`CategoryService` / `CategoryServiceImpl`** — added `getActiveCategories()`
+  for the `GET /v1/categories/active` endpoint (backed by the existing
+  `CategoryRepository.findByActiveTrue()`).
+- **`OrderService` / `OrderServiceImpl`** — added `getAllOrders(status, page, size)`
+  for the admin order list endpoint.
+- **`OrderRepository`** — added a paginated `findByStatus(status, Pageable)`
+  overload to back the above.
+- **`AddressService` / `AddressServiceImpl`** — added `setDefaultAddress(userId, addressId)`
+  for `PUT /v1/addresses/{id}/default`.
+- **`ProductService` / `ProductServiceImpl`** — added `filterProducts(...)`
+  for `GET /v1/products/filter`.
+- **`ProductRepository`** — added a `filterProducts(...)` JPQL query with
+  null-safe optional predicates (category/brand/price range).
+
+No entity, DTO, mapper, exception, or security-core (JWT/UserDetails) file
+required changes — the business and security layers already exposed
+everything the controllers needed.
+
+### 12.3 API endpoint summary
+
+| Controller | Base path | Endpoints | Public | Authenticated | Role-restricted |
+|---|---|---|---|---|---|
+| Auth | `/v1/auth` | 4 | 4 | 0 | 0 |
+| Users | `/v1/users` | 6 | 0 | 3 (own profile) | 3 (ADMIN) |
+| Categories | `/v1/categories` | 7 | 4 (reads) | 0 | 3 (ADMIN writes) |
+| Products | `/v1/products` | 10 | 7 (reads) | 0 | 3 (SELLER/ADMIN writes) |
+| Cart | `/v1/cart` | 5 | 0 | 5 | 0 |
+| Orders | `/v1/orders` | 6 | 0 | 5 | 1 (ADMIN) |
+| Payments | `/v1/payments` | 4 | 0 | 3 | 1 (ADMIN) |
+| Reviews | `/v1/reviews` | 5 | 2 (reads) | 3 | 0 |
+| Wishlist | `/v1/wishlist` | 3 | 0 | 3 | 0 |
+| Addresses | `/v1/addresses` | 6 | 0 | 6 | 0 |
+| **Total** | | **56** | **17** | **28** | **11** |
+
+Full request/response payloads for every endpoint are in
+[`API_DOCUMENTATION.md`](API_DOCUMENTATION.md).
+
+### 12.4 Swagger summary
+
+- Reachable at `http://localhost:8080/api/swagger-ui.html` once the app is running.
+- `OpenApiConfig` registers a single reusable `bearerAuth` HTTP/JWT security
+  scheme; click "Authorize" once and every `@SecurityRequirement`-annotated
+  endpoint uses it.
+- Every endpoint carries `@Operation` (summary + description), and mutating
+  endpoints document their `@ApiResponses` (created/validation/conflict/etc).
+  `@Parameter` documents path/query parameters (ids, pagination, filters).
+  `@Tag` groups endpoints into the 10 sections shown in the table above.
+
+### 12.5 Postman summary
+
+- `postman/ShopSphere.postman_collection.json` — 56 requests in 10 folders,
+  mirroring the controllers exactly.
+- Collection-level Bearer auth reads `{{accessToken}}`, so authenticated
+  requests need no per-request header setup.
+- **Login** (and **Register**) have a test script that automatically writes
+  `accessToken` / `refreshToken` / `userId` into the active environment —
+  run Login once and every subsequent request in the collection is authenticated.
+- **Place Order**, **Add Review**, and **Create Address** similarly capture
+  `orderId`/`orderNumber`, `reviewId`, and `addressId` for the requests that follow them.
+- `postman/ShopSphere.postman_environment.json` provides the `baseUrl`
+  (`http://localhost:8080/api`) and placeholder ids for a fresh local run.
+
+### 12.6 Checklist — Phase 4 Deliverables
+
+- [x] `AuthController` — register, login, refresh, logout
+- [x] `UserController` — profile get/update/delete + admin get/list/delete
+- [x] `CategoryController` — CRUD + get-all + get-by-id + get-active + top-level
+- [x] `ProductController` — CRUD + get + get-all + search + filter + by-category + by-seller + latest, all paginated/sortable
+- [x] `CartController` — add/update/remove/clear/view
+- [x] `OrderController` — place/cancel/history/details/track + admin list
+- [x] `PaymentController` — create/status/update-status/details
+- [x] `ReviewController` — add/update/delete/product-reviews/average-rating
+- [x] `WishlistController` — add/remove/view
+- [x] `AddressController` — create/update/delete/get-all/get-default/set-default
+- [x] `OpenApiConfig` with JWT bearer scheme, tags, operation descriptions on every endpoint
+- [x] `ShopSphere.postman_collection.json` (56 requests, auto token capture) + `ShopSphere.postman_environment.json`
+- [x] `API_DOCUMENTATION.md` covering all 10 API groups
+- [x] Controller tests: MockMvc + `@WebMvcTest` for `AuthController`, `ProductController`, `CartController`; a dedicated `SecurityAccessControlTest` exercising the real filter chain (401/403/200)
+- [x] `ResponseEntity<ApiResponse<T>>` + proper HTTP status codes (200/201/400/401/403/404/409/500) throughout
+- [x] Constructor injection, `@Valid`, `@AuthenticationPrincipal`, SLF4J logging on every controller
+- [ ] React frontend — later phase
+- [ ] Docker / deployment / AWS — later phase (explicitly excluded from this phase)
+
+---
+
+**End of Phase 4.** Awaiting instructions for Phase 5.
+
 
 
